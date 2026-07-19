@@ -1,0 +1,55 @@
+spring:
+  application:
+    name: jackpot-service
+  profiles:
+    default: mock
+  datasource:
+    url: jdbc:h2:mem:jackpot;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# Jackpots seeded at startup. Covers every combination of contribution x reward type.
+jackpot:
+  seed:
+    - id: classic-progressive
+      initialPoolAmount: "1000.00"
+      contributionType: FIXED
+      contributionRate: "0.05"
+      rewardType: FIXED
+      rewardChance: "0.10"
+    - id: must-drop
+      initialPoolAmount: "1000.00"
+      contributionType: FIXED
+      contributionRate: "0.05"
+      rewardType: VARIABLE
+      rewardChance: "0.01"
+      rewardPoolLimit: "5000.00"
+    - id: fast-start
+      initialPoolAmount: "1000.00"
+      contributionType: VARIABLE
+      contributionRate: "0.10"
+      minContributionRate: "0.02"
+      contributionDecayFactor: "0.05"
+      rewardType: FIXED
+      rewardChance: "0.10"
+    - id: dynamic
+      initialPoolAmount: "1000.00"
+      contributionType: VARIABLE
+      contributionRate: "0.10"
+      minContributionRate: "0.02"
+      contributionDecayFactor: "0.05"
+      rewardType: VARIABLE
+      rewardChance: "0.01"
+      rewardPoolLimit: "5000.00"

@@ -1,4 +1,4 @@
-package com.sporty.jackpot_service;
+package com.sporty.jackpot;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
