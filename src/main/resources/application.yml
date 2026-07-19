@@ -20,8 +20,11 @@ spring:
       enabled: true
       path: /h2-console
 
-# Jackpots seeded at startup. Covers every combination of contribution x reward type.
 jackpot:
+  kafka:
+    topic: jackpot-bets
+
+  # Jackpots seeded at startup. Covers every combination of contribution x reward type.
   seed:
     - id: classic-progressive
       initialPoolAmount: "1000.00"
@@ -53,3 +56,23 @@ jackpot:
       rewardType: VARIABLE
       rewardChance: "0.01"
       rewardPoolLimit: "5000.00"
+
+---
+# Real broker. Activate with --spring.profiles.active=kafka (see docker-compose.yml).
+# Property names verified against the Boot 4.1 spring-boot-kafka configuration metadata.
+spring:
+  config:
+    activate:
+      on-profile: kafka
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # JacksonJsonSerializer, NOT the older JsonSerializer: Boot 4.1 ships Jackson 3
+      # (tools.jackson) on the compile classpath, and only this serializer binds to it.
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      acks: all
+    properties:
+      # No type headers: the payload is a plain JSON contract, not a Java-typed message. Keeping
+      # type info out means a non-Java consumer can read the topic.
+      spring.json.add.type.headers: false
