@@ -72,6 +72,16 @@ spring:
       # (tools.jackson) on the compile classpath, and only this serializer binds to it.
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       acks: all
+    consumer:
+      group-id: jackpot-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # No value-deserializer here on purpose. The payload carries no type header (see below), so
+      # the deserializer must be told its target type — done in KafkaConsumerConfig, where the
+      # type is a compile-checked class reference rather than a string.
+      #
+      # earliest, not latest: a consumer group starting for the first time should process the
+      # bets already sitting on the topic rather than silently skipping them.
+      auto-offset-reset: earliest
     properties:
       # No type headers: the payload is a plain JSON contract, not a Java-typed message. Keeping
       # type info out means a non-Java consumer can read the topic.

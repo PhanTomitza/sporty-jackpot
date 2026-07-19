@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import com.sporty.jackpot.config.JackpotKafkaProperties;
+import com.sporty.jackpot.service.JackpotContributionService;
 
 /**
  * Logs the bet payload instead of publishing it. Active under the {@code mock} profile (the
@@ -21,9 +22,12 @@ public class LoggingBetPublisher implements BetPublisher {
     private static final Logger log = LoggerFactory.getLogger(LoggingBetPublisher.class);
 
     private final JackpotKafkaProperties kafkaProperties;
+    private final JackpotContributionService contributionService;
 
-    public LoggingBetPublisher(JackpotKafkaProperties kafkaProperties) {
+    public LoggingBetPublisher(JackpotKafkaProperties kafkaProperties,
+            JackpotContributionService contributionService) {
         this.kafkaProperties = kafkaProperties;
+        this.contributionService = contributionService;
     }
 
     @Override
@@ -38,9 +42,12 @@ public class LoggingBetPublisher implements BetPublisher {
                 bet.jackpotId(),
                 bet.betAmount());
 
-        // TODO(Phase 4): invoke the same downstream bet-processing entry point that the real Kafka
-        // consumer will call, so the mock profile exercises contribution logic end-to-end without a
-        // broker. Deliberately not implemented here — Phase 3 is publishing only, and the
-        // contribution logic must live in the shared processing path, never in a publisher.
+        // Stands in for the broker round trip: this is the same entry point KafkaBetConsumer
+        // calls, so the mock profile exercises the identical contribution path with no broker.
+        // Note this is a direct, synchronous call, whereas the Kafka path is asynchronous — the
+        // processing is identical, the delivery is not. That difference is why the pool still
+        // needs its pessimistic lock here: with no partition to serialise anything, concurrent
+        // HTTP requests for one jackpot land on this method on different threads at once.
+        contributionService.processBet(bet);
     }
 }

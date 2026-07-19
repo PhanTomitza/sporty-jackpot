@@ -1,6 +1,7 @@
 package com.sporty.jackpot.domain;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -79,4 +80,27 @@ public class Jackpot {
     /** VARIABLE only: the pool value at which win chance reaches 100%. Money, so scale 2. */
     @Column(precision = 19, scale = 2)
     private BigDecimal rewardPoolLimit;
+
+    // --- Pool mutation ---------------------------------------------------------------------
+    // These two methods are the ONLY way the pool changes, and there is deliberately no
+    // setCurrentPoolAmount. A setter would let any caller assign an arbitrary pool value; these
+    // express the only two legal transitions the domain has, so an illegal pool state is
+    // unreachable by construction rather than merely discouraged by convention. The entity owns
+    // its own invariant instead of trusting every service that touches it.
+
+    /**
+     * Adds {@code amount} to the pool. Re-scaled to 2 so the pool stays a monetary value even if a
+     * strategy hands back something at a wider scale.
+     */
+    public void contribute(BigDecimal amount) {
+        this.currentPoolAmount = this.currentPoolAmount.add(amount).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Returns the pool to its initial value. Used after a win, when the reward paid out equals the
+     * whole pool and the jackpot starts accumulating again from its seed value.
+     */
+    public void resetPool() {
+        this.currentPoolAmount = this.initialPoolAmount;
+    }
 }
