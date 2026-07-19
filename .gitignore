@@ -32,8 +32,10 @@ build/
 ### VS Code ###
 .vscode/
 
+### macOS ###
+.DS_Store
+
 ### AI ###
 AI_NOTES.md
 AUDIT.md
 CLAUDE.md
-TRACEABILITY.md

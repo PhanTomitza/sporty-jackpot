@@ -28,7 +28,7 @@ import com.sporty.jackpot.strategy.ContributionStrategyResolver;
  *
  * <p><b>Why the pessimistic lock is required despite Kafka keying by jackpotId.</b> Keying gives
  * per-partition ordering <em>among Kafka consumers only</em>. It says nothing about any other
- * writer. Two such writers exist: the Phase 5 evaluate endpoint mutates the same pool from an HTTP
+ * writer. Two such writers exist: the evaluate endpoint mutates the same pool from an HTTP
  * request thread that never goes through Kafka, and under the {@code mock} profile there is no
  * Kafka at all — every bet is processed on the HTTP thread that posted it, so several can run
  * concurrently against one pool with no partition to serialise them. The lock, not the key, is

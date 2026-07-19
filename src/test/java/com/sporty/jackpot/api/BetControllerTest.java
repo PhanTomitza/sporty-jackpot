@@ -38,8 +38,8 @@ class BetControllerTest {
     @MockitoBean
     private BetPublisher betPublisher;
 
-    // Required by the controller's constructor since Phase 5. The evaluation logic itself is
-    // covered by RewardEvaluationServiceTest; here the mock only proves the HTTP mapping.
+    // Required by the controller's constructor. The evaluation logic itself is covered by
+    // RewardEvaluationServiceTest; here the mock only proves the HTTP mapping.
     @MockitoBean
     private RewardEvaluationService rewardEvaluationService;
 

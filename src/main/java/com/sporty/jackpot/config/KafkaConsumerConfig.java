@@ -17,7 +17,7 @@ import com.sporty.jackpot.messaging.BetMessage;
 /**
  * Consumer wiring for the {@code kafka} profile.
  *
- * <p><b>Why this exists rather than a few properties in application.yml.</b> Phase 3 set
+ * <p><b>Why this exists rather than a few properties in application.yml.</b> The producer sets
  * {@code spring.json.add.type.headers=false}, deliberately, so the payload is plain JSON that a
  * non-Java consumer can read. The consequence is that the deserializer has no type header to infer
  * a target type from and must be told the type explicitly. Expressing that in YAML would mean a

@@ -42,8 +42,8 @@ import com.sporty.jackpot.domain.RewardType;
  * asserted by a coin flip, which is a flaky test rather than a test of the win path. The stub makes
  * the outcome an input, so each test states which branch it is exercising.
  *
- * <p>As in Phase 4, each test works against its own jackpot id rather than a seeded one, so the
- * tests stay independent of {@code application.yml} and of each other.
+ * <p>As in the contribution tests, each test works against its own jackpot id rather than a seeded
+ * one, so the tests stay independent of {@code application.yml} and of each other.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
