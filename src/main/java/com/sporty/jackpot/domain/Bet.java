@@ -38,4 +38,25 @@ public class Bet {
 
     @Column(nullable = false)
     private Instant createdAt;
+
+    /**
+     * When this bet was evaluated for a jackpot win, or null if it never has been.
+     *
+     * <p>Nullable by design: it is the "has this bet had its one roll yet" flag, and a bet that has
+     * not been evaluated has no such moment. A boolean would carry the same information with less
+     * of it — the timestamp also answers <em>when</em>, which matters for an audit trail on a bet
+     * that lost and therefore left no reward row behind.
+     */
+    @Column
+    private Instant evaluatedAt;
+
+    /**
+     * Records that this bet has been evaluated. As with {@link Jackpot}'s pool methods there is
+     * deliberately no setter: the only legal transition is null → a timestamp, once. Exposing a
+     * setter would let a caller clear the field and hand the bet a second roll at the pool, which
+     * is precisely the abuse this field exists to prevent.
+     */
+    public void markEvaluated(Instant evaluatedAt) {
+        this.evaluatedAt = evaluatedAt;
+    }
 }
