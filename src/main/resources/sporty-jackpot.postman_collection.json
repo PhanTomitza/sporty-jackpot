@@ -1,0 +1,366 @@
+{
+  "info": {
+    "name": "sporty-jackpot",
+    "description": "Jackpot service — every HTTP endpoint the application exposes.\n\nThe service has exactly two endpoints:\n\n- `POST /api/bets` — publish a bet. Returns **202 Accepted**: the bet has been accepted for asynchronous processing, but nothing has been persisted and no pool has moved yet.\n- `POST /api/bets/{betId}/evaluate` — evaluate a processed bet for a jackpot win. **POST, not GET**, because a win pays out the pool and resets it.\n\n**Run order matters.** A bet must be published *and processed* before it can be evaluated. Under the default `mock` profile processing is synchronous, so evaluate works immediately. Under the `kafka` profile the bet travels through a real broker, so evaluating too quickly returns **404** until the consumer has caught up — wait a moment and retry.\n\n**Bet ids are generated per run.** Each publish request has a pre-request script that writes a fresh unique `betId` into a collection variable, which the paired evaluate request then reads. This is deliberate: `betId` is the idempotency key, so re-sending a bet id that has already been processed is silently skipped rather than contributing twice.\n\n**A bet gets exactly one evaluation.** Calling evaluate a second time returns the recorded outcome without rolling again — a win replays the stored reward, a loss stays a loss.\n\nSeeded jackpots (from `application.yml`), all starting at a pool of 1000.00:\n\n| id | contribution | reward |\n|---|---|---|\n| `classic-progressive` | FIXED 5% | FIXED 10% |\n| `must-drop` | FIXED 5% | VARIABLE, base 1%, 100% at pool 5000.00 |\n| `fast-start` | VARIABLE 10% decaying to 2% | FIXED 10% |\n| `dynamic` | VARIABLE 10% decaying to 2% | VARIABLE, base 1%, limit 5000.00 |\n\nThe H2 console is not a REST endpoint and is not included here. Browse it at http://localhost:8080/h2-console (JDBC URL `jdbc:h2:mem:jackpot`, user `sa`, empty password).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "betId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "mustDropBetId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy path",
+      "description": "Publish a bet, then evaluate it. The win is a genuine roll at the jackpot's configured chance, so the evaluate step may legitimately return `won: false`.",
+      "item": [
+        {
+          "name": "Publish bet — fast-start (VARIABLE contribution)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fresh id per run: betId is the idempotency key, so reusing one",
+                  "// would be skipped as a duplicate delivery instead of contributing.",
+                  "pm.collectionVariables.set('betId', 'bet-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.test('status is ACCEPTED', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('ACCEPTED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"{{betId}}\",\n  \"userId\": \"user-alice\",\n  \"jackpotId\": \"fast-start\",\n  \"betAmount\": 100.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "Publishes a bet to the `jackpot-bets` topic (or logs it and processes it inline under the `mock` profile).\n\n`fast-start` uses VARIABLE contribution: the rate starts at 10% and decays linearly as the pool grows, floored at 2%. A 100.00 stake against a fresh 1000.00 pool contributes 10.00.\n\n**Response — 202 Accepted**\n```json\n{ \"betId\": \"bet-...\", \"status\": \"ACCEPTED\" }\n```\n\n202 rather than 201: no resource exists yet at any location, and the pool has not moved. `status` reports that the bet was taken for processing, not that a contribution was applied."
+          }
+        },
+        {
+          "name": "Evaluate bet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('rewardAmount is null exactly when won is false', () => {",
+                  "    pm.expect(body.rewardAmount === null).to.eql(body.won === false);",
+                  "});",
+                  "console.log(body.won ? 'WON ' + body.rewardAmount : 'no win');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bets/{{betId}}/evaluate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets", "{{betId}}", "evaluate"]
+            },
+            "description": "Evaluates the bet published above. On a win the reward is the **entire** current pool and the jackpot resets to its initial value.\n\n**Response — 200 OK**\n```json\n{ \"betId\": \"bet-...\", \"won\": false, \"rewardAmount\": null }\n```\n```json\n{ \"betId\": \"bet-...\", \"won\": true, \"rewardAmount\": 1010.00 }\n```\n\n`rewardAmount` is null exactly when `won` is false — a loss is not a payout of zero.\n\nPOST rather than GET because a win mutates server state. Repeat calls return the same stored answer, but that is not HTTP idempotence: the first call is what moves the money.\n\nReturns **404** if the bet has not been processed yet — expected under the `kafka` profile if you evaluate immediately after publishing."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Guaranteed win — must-drop",
+      "description": "A deterministic win, useful for demonstrating the payout and reset without relying on chance.\n\n`must-drop` contributes a FIXED 5% and its VARIABLE reward chance reaches 100% once the pool hits 5000.00. A single stake of 80000.00 contributes exactly 4000.00, taking the pool from 1000.00 to precisely the limit — so the following evaluation always wins.\n\nRun these two in order. They only behave as described against a `must-drop` pool sitting at its initial 1000.00; after a win it resets there, so the pair is repeatable.",
+      "item": [
+        {
+          "name": "Publish bet — must-drop, stake 80000.00",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('mustDropBetId', 'bet-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('202 Accepted', () => pm.response.to.have.status(202));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"{{mustDropBetId}}\",\n  \"userId\": \"user-bob\",\n  \"jackpotId\": \"must-drop\",\n  \"betAmount\": 80000.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "80000.00 × 5% = 4000.00, taking the `must-drop` pool from 1000.00 to exactly its 5000.00 reward limit."
+          }
+        },
+        {
+          "name": "Evaluate — always wins 5000.00",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('won', () => pm.expect(pm.response.json().won).to.be.true);",
+                  "pm.test('reward is the whole pool', () => {",
+                  "    pm.expect(pm.response.json().rewardAmount).to.eql(5000.00);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bets/{{mustDropBetId}}/evaluate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets", "{{mustDropBetId}}", "evaluate"]
+            },
+            "description": "The pool is at the reward limit, so the win chance is exactly 1.0.\n\n**Response — 200 OK**\n```json\n{ \"betId\": \"bet-...\", \"won\": true, \"rewardAmount\": 5000.00 }\n```\n\nPays out the whole pool and resets `must-drop` to 1000.00. Call it again and it returns the same stored reward without rolling again and without touching the pool."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Other seeded jackpots",
+      "description": "The two remaining contribution × reward combinations, for exercising each strategy pair.",
+      "item": [
+        {
+          "name": "Publish bet — classic-progressive (FIXED / FIXED)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('betId', 'bet-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"{{betId}}\",\n  \"userId\": \"user-carol\",\n  \"jackpotId\": \"classic-progressive\",\n  \"betAmount\": 200.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "Flat 5% in, flat 10% chance out. A 200.00 stake contributes 10.00 regardless of pool size.\n\nSets `betId`, so the \"Evaluate bet\" request in the Happy path folder will evaluate this one."
+          }
+        },
+        {
+          "name": "Publish bet — dynamic (VARIABLE / VARIABLE)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('betId', 'bet-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"{{betId}}\",\n  \"userId\": \"user-dave\",\n  \"jackpotId\": \"dynamic\",\n  \"betAmount\": 500.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "Both sides move with the pool: the contribution rate decays from 10% toward its 2% floor as the pool grows, while the reward chance climbs from 1% toward 100% at a 5000.00 pool.\n\nSend this repeatedly to watch the effective contribution rate fall — each response is only 202, so read the application log or the `jackpot_contribution` table to see it.\n\nSets `betId`, so the \"Evaluate bet\" request in the Happy path folder will evaluate this one."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error and edge cases",
+      "item": [
+        {
+          "name": "Publish — validation failure (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('reports every offending field at once', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.error).to.eql('VALIDATION_FAILED');",
+                  "    pm.expect(Object.keys(body.fieldErrors)).to.have.lengthOf(3);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"\",\n  \"userId\": \"   \",\n  \"jackpotId\": \"fast-start\",\n  \"betAmount\": 0\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "Three violations in one body: blank `betId`, blank `userId`, and a zero `betAmount`.\n\n`betAmount` is `@Positive`, not `@PositiveOrZero` — a zero bet would contribute nothing while still occupying a bet id, so it is rejected at the edge rather than becoming a no-op record.\n\n**Response — 400 Bad Request**\n```json\n{\n  \"error\": \"VALIDATION_FAILED\",\n  \"fieldErrors\": {\n    \"betId\": \"must not be blank\",\n    \"userId\": \"must not be blank\",\n    \"betAmount\": \"must be greater than zero\"\n  }\n}\n```\n\nEvery offending field is reported at once, so the caller does not fix them one request at a time."
+          }
+        },
+        {
+          "name": "Evaluate — unknown betId (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('error code is BET_NOT_FOUND', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('BET_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/bets/no-such-bet/evaluate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets", "no-such-bet", "evaluate"]
+            },
+            "description": "**Response — 404 Not Found**\n```json\n{ \"error\": \"BET_NOT_FOUND\", \"message\": \"...\" }\n```\n\n404 rather than a reported loss. A bet row is written only once the bet has been consumed and contributed, so an id with no bet behind it is a request about a resource that does not exist. Reporting it as a loss would be a lie the caller cannot detect, and would mask both a typo'd id and a bet still queued for processing.\n\nThis is also the response you get under the `kafka` profile if you evaluate before the consumer has processed the bet."
+          }
+        },
+        {
+          "name": "Publish — unknown jackpot (202, no contribution)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('betId', 'bet-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted — the publish itself is fine', () => {",
+                  "    pm.response.to.have.status(202);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"{{betId}}\",\n  \"userId\": \"user-eve\",\n  \"jackpotId\": \"no-such-jackpot\",\n  \"betAmount\": 100.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "The endpoint still returns **202** — it does not know which jackpots exist, and validation only checks that `jackpotId` is non-blank.\n\nDownstream, the contribution service looks the jackpot up, finds nothing, logs a warning and returns normally without recording anything. The spec contributes only \"if there is such a jackpot\", so this is not an error condition; throwing would fail the Kafka listener and put a permanently unprocessable message into an endless redelivery loop.\n\nNo bet row is written, so evaluating this `betId` afterwards returns **404**. Watch the application log for:\n```\nBet ... references unknown jackpot 'no-such-jackpot' — no contribution recorded\n```"
+          }
+        },
+        {
+          "name": "Publish — duplicate betId (idempotency)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted both times', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"betId\": \"fixed-duplicate-bet\",\n  \"userId\": \"user-frank\",\n  \"jackpotId\": \"classic-progressive\",\n  \"betAmount\": 100.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/bets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "bets"]
+            },
+            "description": "Deliberately uses a hard-coded `betId` rather than a generated one.\n\n**Send it twice.** Both calls return 202, but only the first moves the pool. `betId` is the idempotency key: Kafka delivery is at-least-once, so the same bet legitimately arrives again after a restart or a rebalance, and a `betId` already present in the bet table is skipped rather than contributed twice.\n\nThe second send logs:\n```\nBet fixed-duplicate-bet has already been processed — skipping duplicate delivery\n```\n\nThe skip is decided on `betId` alone — change the amount and it is still skipped. The first delivery wins.\n\nNote this only resets when the application restarts, since the database is in-memory."
+          }
+        }
+      ]
+    }
+  ]
+}
